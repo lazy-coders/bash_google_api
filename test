@@ -1,0 +1,10 @@
+#!/bin/bash -x
+GOOGLE_CLIENT_CONFIGURATION_FILE="config"
+
+. google_spreadsheet
+
+SPREADSHEET="1i9loQbPoPsSLPh1WtMTTLJNN3tbJpymBCGY1Pivtg7I"
+SHEET="0"
+
+batchUpdate "${SPREADSHEET}" "$(appendCells ${SHEET} row string:"" number:"24505" string:"KKK Hola que ases?")"
+

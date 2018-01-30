@@ -1,0 +1,155 @@
+#!/bin/bash
+# Google Oauth 2 for bash
+# Copyright (C) 2018 Samuel Rodriguez Sevilla <laparca@laparca.es>
+# Copyright (C) 2018 Distribuidira Internacional de Alimentacion S.A.
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU Affero General Public License for more details.
+#
+# You should have received a copy of the GNU Affero General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+# This should be eliminated from here
+
+[ -n "$DEBUG" ] && set -x
+
+function show_text_or_default() {
+	if [ -z "$2" ]; then
+		echo "$1 no esta definido." 1>&2
+	else
+		echo "$2"
+	fi
+}
+
+function configure_option() {
+	local value
+	echo "$1 no esta definido. Por favor, indique que valor debe tener:"
+	read value
+
+	eval "$1=$value"
+}
+
+function configure_proxy() {
+	local result
+	local proxy_url
+
+	if [ -n "${https_proxy}" ]; then
+		PROXY="-x $https_proxy"
+	elif [ -z "${PROXY}" ]; then
+		echo "¿Desea configurar un proxy (s/N)? "
+		read result
+		if [ "$result" == "s" ] || [ "$result" == "S" ]; then
+			echo "Introduzca la URL del proxy: "
+			read proxy_url
+			if [ -n "$proxy_url" ]; then
+				PROXY="-x $proxy_url"
+			fi
+		fi
+	fi
+}
+
+SOME_OPTION_WAS_MODIFIED=false
+function check_option_or_action() {
+	local var="$1"
+	if [ -z "${!var}" ]; then
+		"$2" "$1"
+		SOME_OPTION_WAS_MODIFIED=true
+	fi
+}
+
+# Checks if a environment variable is seted. In other case it shows an error an
+# exit.
+function check_option_or_error() {
+	local var="$1"
+	if [ -z "${!var}" ]; then
+		show_text_or_default "$1" "$2"
+		exit 1
+	fi
+}
+
+function check_option_or_default() {
+	local var="$1"
+	if [ -z "${!var}" ]; then
+		eval "$1='$2'"
+	fi
+}
+
+function check_file_or_action() {
+	[ ! -f "$1" ] && "$2"
+}
+
+function save_options_in() {
+	local dest="$1"
+	shift
+	
+	mkdir -p "$(dirname "$dest")" 2> /dev/null
+
+	[ -f "${dest}" ] && cp "${dest}" "${dest}.$(date +%Y%m%d%H%M%S)"
+
+	for option in $@; do
+		echo "$option=${!option}" >> "$dest"
+	done
+}
+
+GOOGLE_CLIENT_PATH="~/.config/bash_google_oauth2_client"
+# Initial checks
+check_option_or_default "GOOGLE_CLIENT_CONFIGURATION_FILE" "${GOOGLE_CLIENT_PATH}/client"
+if [ -f "$GOOGLE_CLIENT_CONFIGURATION_FILE" ]; then
+	. "$GOOGLE_CLIENT_CONFIGURATION_FILE"
+fi
+
+check_option_or_action  "CLIENT_ID"     configure_option
+check_option_or_action  "CLIENT_SECRET" configure_option
+check_option_or_default "TOKEN_FILE"    "${GOOGLE_CLIENT_PATH}/token"
+check_option_or_default "API_SCOPE"     "https://www.googleapis.com/auth/spreadsheets"
+check_file_or_action "${GOOGLE_CLIENT_CONFIGURATION_FILE}" configure_proxy
+
+if $SOME_OPTION_WAS_MODIFIED; then
+	save_options_in "$GOOGLE_CLIENT_CONFIGURATION_FILE" "CLIENT_ID" "CLIENT_SECRET" "PROXY"
+fi
+
+# Callback need for command line programas
+CALLBACK_URI="urn:ietf:wg:oauth:2.0:oob"
+
+function setup() {
+	echo "Es necesario abrir la siguiente URL:"
+	echo "https://accounts.google.com/o/oauth2/auth?client_id=${CLIENT_ID}&redirect_uri=${CALLBACK_URI}&scope=${API_SCOPE}&response_type=code&request=offline"
+	echo "Cuando lo haya hecho introduzca a continuacion el codigo devuelto:"
+	read code
+
+	curl ${PROXY} -d "code=${code}" -d client_id="${CLIENT_ID}" -d client_secret="${CLIENT_SECRET}" -d redirect_uri="${CALLBACK_URI}" -d 'grant_type=authorization_code' -d 'request=offline' 'https://www.googleapis.com/oauth2/v4/token' | sed '/{/d;/}/d;s/,\s*$//g;s/\s*"\([a-zA-Z_0-9]\+\)":\s*\(.*\)$/\1=\2/' > "${TOKEN_FILE}"
+	echo "code=\"$code\"" >> "${TOKEN_FILE}"
+}
+
+function renewToken() {
+	. "${TOKEN_FILE}"
+	modifDate="$(stat -L -c %Y "${TOKEN_FILE}")"
+	if [ -z "$expires_in" ]; then
+	   expires_in=0
+	fi
+	fechExp="$(($modifDate + $expires_in))"
+	fechNow="$(date +%s)"
+	if [ ${fechNow} -gt ${fechExp} ]; then
+		curl ${PROXY} -d refresh_token="${refresh_token}" -d client_id="${CLIENT_ID}" -d client_secret="${CLIENT_SECRET}" -d 'grant_type=refresh_token' 'https://www.googleapis.com/oauth2/v4/token' | sed '/{/d;/}/d;s/,\s*$//g;s/\s*"\([a-zA-Z_0-9]\+\)":\s*\(.*\)$/\1=\2/' > "${TOKEN_FILE}"
+		echo "refresh_token=\"${refresh_token}\"" >> "${TOKEN_FILE}"
+		echo "code=\"$code\"" >> "${TOKEN_FILE}"
+	fi
+}
+
+# If the token was never negotiated then do the setup
+if [ ! -f "${TOKEN_FILE}" ]; then
+	setup
+fi
+
+# Try renew the auth token if necesary
+renewToken
+
+# Import the data for do connections to the API
+. "${TOKEN_FILE}"

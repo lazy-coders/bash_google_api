@@ -1,0 +1,92 @@
+#!/bin/bash
+# Google Oauth 2 for bash
+# Copyright (C) 2018 Samuel Rodriguez Sevilla <laparca@laparca.es>
+# Copyright (C) 2018 Distribuidira Internacional de Alimentacion S.A.
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU Affero General Public License for more details.
+#
+# You should have received a copy of the GNU Affero General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+# This should be eliminated from here
+
+. google_oauth2
+
+function cellValue() {
+cat <<END
+{
+  "userEnteredValue": {
+    "$1Value": "$2"
+  }
+}
+END
+}
+
+function appendCells() {
+	local sheetId="$1"
+	local rows=""
+	local row=""
+	shift
+	while [ -n "$1" ]; do
+		case "$1" in
+			row)
+				if [ -n "$rows" ]; then
+					rows="$rows, {\"values\": [$row]}"
+				elif [ -n "$row" ]; then
+					rows="{\"values\": [$row]}"
+				fi
+				row=
+				;;
+
+			*)
+				local type="${1/:*/}"
+				local value="${1/*:/}"
+
+				local cellData="$(cellValue "${type}" "${value}")"
+
+				if [ -z "$row" ]; then
+					row="${cellData}"
+				else
+					row="$row, ${cellData}"
+				fi
+				;;
+		esac
+		shift
+	done
+
+	if [ -n "$rows" ]; then
+		rows="$rows, {\"values\": [$row]}"
+	else
+		rows="{\"values\": [$row]}"
+	fi
+
+cat <<END
+{
+	"requests": [{
+		"appendCells": {
+			"sheetId": ${sheetId},
+			"rows": [$rows],
+			"fields": "*"
+		}
+	}],
+	"includeSpreadsheetInResponse": false,
+	"responseIncludeGridData": false
+}
+END
+}
+
+function batchUpdate() {
+	local spreadsheet="$1"
+	local data="$2"
+	local URL="https://sheets.googleapis.com/v4/spreadsheets/${spreadsheet}:batchUpdate"
+	curl ${PROXY} -H "Content-Type: application/json" -H "Authorization: ${token_type} ${access_token}" "${URL}" --data "${data}"
+}
+
