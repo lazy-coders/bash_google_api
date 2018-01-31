@@ -70,23 +70,32 @@ function appendCells() {
 
 cat <<END
 {
-	"requests": [{
-		"appendCells": {
-			"sheetId": ${sheetId},
-			"rows": [$rows],
-			"fields": "*"
-		}
-	}],
-	"includeSpreadsheetInResponse": false,
-	"responseIncludeGridData": false
+	"appendCells": {
+		"sheetId": ${sheetId},
+		"rows": [$rows],
+		"fields": "*"
+	}
 }
 END
 }
 
 function batchUpdate() {
 	local spreadsheet="$1"
-	local data="$2"
 	local URL="https://sheets.googleapis.com/v4/spreadsheets/${spreadsheet}:batchUpdate"
+	shift
+	local data=
+	
+	while [ -n "$1" ]; do
+		if [ -z "${data}" ];then
+			data="$1"
+		else
+			data="$data,$1"
+		fi
+		shift
+	done
+
+	data="{ \"requests\": [$data], \"includeSpreadsheetInResponse\": false, \"responseIncludeGridData\": false }"
+
 	curl ${PROXY} -H "Content-Type: application/json" -H "Authorization: ${token_type} ${access_token}" "${URL}" --data "${data}"
 }
 
